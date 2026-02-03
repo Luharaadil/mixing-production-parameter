@@ -40,4 +40,5 @@ export interface FilterState {
   machine: string;
   lotNumber: string;
   rubber: string;
+  selectedBatches: string[];
 }

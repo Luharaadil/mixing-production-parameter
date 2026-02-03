@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import FilterSection from './components/FilterSection';
 import ProductionTable from './components/ProductionTable';
 import StatsOverview from './components/StatsOverview';
@@ -14,15 +14,25 @@ const App: React.FC = () => {
     endDate: new Date().toISOString().split('T')[0],
     machine: '',
     lotNumber: '',
-    rubber: ''
+    rubber: '',
+    selectedBatches: []
   });
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isUsingMockData, setIsUsingMockData] = useState(false);
   const [rawSourceData, setRawSourceData] = useState<RawProductionRow[]>([]);
   const [groupedData, setGroupedData] = useState<GroupedBatch[]>([]);
   const [error, setError] = useState<{ message: string; sub: string } | null>(null);
   const [showLimitWarning, setShowLimitWarning] = useState(false);
+
+  // Derive unique batch numbers from source data
+  const availableBatches = useMemo(() => {
+    const batches = Array.from(new Set(rawSourceData.map(r => r.batchNumber))).sort((a, b) => {
+      // Natural sort for batch strings like B1, B2... B10
+      return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+    });
+    return batches;
+  }, [rawSourceData]);
 
   const handleFetchData = async () => {
     setIsLoading(true);
@@ -32,6 +42,10 @@ const App: React.FC = () => {
       setRawSourceData(data);
       setIsUsingMockData(isMock);
       
+      // Auto-select all batches on initial load
+      const batches = Array.from(new Set(data.map(r => r.batchNumber)));
+      setFilters(prev => ({ ...prev, selectedBatches: batches }));
+
       if (isMock) {
         setError({
           message: "Simulation Active",
@@ -39,6 +53,7 @@ const App: React.FC = () => {
         });
       }
     } catch (err: any) {
+      console.error("Fetch Failure:", err);
       setError({
         message: "Fetch Failure",
         sub: err.message || "Failed to load data."
@@ -51,45 +66,67 @@ const App: React.FC = () => {
   useEffect(() => {
     if (rawSourceData.length === 0) return;
 
-    console.time('filter_and_group_pipeline');
-    
-    // 1. Pre-filter Raw Data (Performance Optimization)
-    const start = filters.startDate ? new Date(filters.startDate) : null;
-    if (start) start.setHours(0, 0, 0, 0);
-    const end = filters.endDate ? new Date(filters.endDate) : null;
-    if (end) end.setHours(23, 59, 59, 999);
-
-    const filteredRaw = rawSourceData.filter(row => {
-      const rowDate = new Date(row.date);
-      const dateMatch = (!start || rowDate >= start) && (!end || rowDate <= end);
-      const machineMatch = !filters.machine || String(row.machine || '').toLowerCase().includes(filters.machine.toLowerCase());
-      const rubberMatch = !filters.rubber || String(row.rubber || '').toLowerCase().includes(filters.rubber.toLowerCase());
+    try {
+      console.time('filter_and_group_pipeline');
       
-      return dateMatch && machineMatch && rubberMatch;
-    });
+      const start = filters.startDate ? new Date(filters.startDate) : null;
+      if (start) start.setHours(0, 0, 0, 0);
+      const end = filters.endDate ? new Date(filters.endDate) : null;
+      if (end) end.setHours(23, 59, 59, 999);
 
-    // 2. Group Pre-filtered Data
-    const processed = processBatchData(filteredRaw);
+      // Pre-filter Raw Data (Performance Optimization)
+      const filteredRaw = rawSourceData.filter(row => {
+        const rowDate = new Date(row.date);
+        const dateMatch = (!start || rowDate >= start) && (!end || rowDate <= end);
+        // Partial string match for machine
+        const machineMatch = !filters.machine || String(row.machine || '').toLowerCase().includes(filters.machine.toLowerCase());
+        const rubberMatch = !filters.rubber || String(row.rubber || '').toLowerCase().includes(filters.rubber.toLowerCase());
+        // Checkbox filtering for batches
+        const batchMatch = filters.selectedBatches.length === 0 || filters.selectedBatches.includes(row.batchNumber);
+        
+        return dateMatch && machineMatch && rubberMatch && batchMatch;
+      });
 
-    // 3. Post-filter by Lot (remaining text search)
-    const finalResult = processed.filter(batch => {
-      const lotMatch = !filters.lotNumber || String(batch.lotNumber || '').toLowerCase().includes(filters.lotNumber.toLowerCase());
-      return lotMatch;
-    });
+      // Group Pre-filtered Data
+      const processed = processBatchData(filteredRaw);
 
-    // 4. Check display limit
-    setShowLimitWarning(finalResult.length > ROW_DISPLAY_LIMIT);
-    setGroupedData(finalResult.slice(0, ROW_DISPLAY_LIMIT));
-    
-    console.timeEnd('filter_and_group_pipeline');
-  }, [rawSourceData, filters.startDate, filters.endDate, filters.machine, filters.lotNumber, filters.rubber]);
+      // Post-filter by Lot (remaining text search)
+      const finalResult = processed.filter(batch => {
+        const lotMatch = !filters.lotNumber || String(batch.lotNumber || '').toLowerCase().includes(filters.lotNumber.toLowerCase());
+        return lotMatch;
+      });
+
+      setShowLimitWarning(finalResult.length > ROW_DISPLAY_LIMIT);
+      setGroupedData(finalResult.slice(0, ROW_DISPLAY_LIMIT));
+      
+      console.timeEnd('filter_and_group_pipeline');
+    } catch (err: any) {
+      console.error("Pipeline Runtime Error:", err);
+      setError({
+        message: "Processing Error",
+        sub: "An error occurred while calculating the report. Check the console for details."
+      });
+    }
+  }, [rawSourceData, filters.startDate, filters.endDate, filters.machine, filters.lotNumber, filters.rubber, filters.selectedBatches]);
 
   useEffect(() => {
-    handleFetchData();
+    // Wrap initial logic to ensure component is mounted
+    const init = async () => {
+      await handleFetchData();
+    };
+    init();
   }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-12 w-full">
+      {/* Universal Loading Overlay */}
+      {isLoading && rawSourceData.length === 0 && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-[100] flex flex-col items-center justify-center">
+          <div className="w-16 h-16 border-4 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
+          <p className="text-slate-600 font-bold text-sm animate-pulse">Initializing Production Engine...</p>
+        </div>
+      )}
+
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 px-6 py-4 shadow-sm w-full">
         <div className="w-full flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -136,10 +173,23 @@ const App: React.FC = () => {
           onFilterChange={(newFilters) => setFilters(prev => ({ ...prev, ...newFilters }))} 
           onSearch={handleFetchData}
           isLoading={isLoading}
+          availableBatches={availableBatches}
         />
 
-        <StatsOverview data={groupedData} />
-        <ProductionTable data={groupedData} />
+        {filters.selectedBatches.length > 0 ? (
+          <>
+            <StatsOverview data={groupedData} />
+            <ProductionTable data={groupedData} />
+          </>
+        ) : (
+          <div className="bg-white p-12 rounded-2xl border border-dashed border-slate-300 text-center">
+            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 mx-auto mb-4">
+              <i className="fa-solid fa-filter text-2xl"></i>
+            </div>
+            <h3 className="text-slate-900 font-bold">No Batches Selected</h3>
+            <p className="text-slate-500 text-sm">Please select at least one batch number from the filter section to view production data.</p>
+          </div>
+        )}
       </main>
     </div>
   );
