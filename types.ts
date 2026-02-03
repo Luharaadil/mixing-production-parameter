@@ -1,4 +1,10 @@
 
+// Fix: Added MachineType enum to provide the missing export for dataService.ts
+export enum MachineType {
+  MIXER = 'MIXER',
+  PREPARATION = 'PREPARATION'
+}
+
 export interface RawProductionRow {
   date: string;       // Column B
   machine: string;    // Column A
@@ -29,18 +35,11 @@ export interface GroupedBatch {
   originalRows: any[];
 }
 
-export enum MachineType {
-  ALL = 'All Types',
-  MIXER = 'Mixer',
-  PREPARATION = 'Preparation Machine'
-}
-
 export interface FilterState {
   startDate: string;
   endDate: string;
   machine: string;
-  machineType: MachineType;
   lotNumber: string;
   rubber: string;
-  selectedBatches: string[];
+  selectedLots: string[];
 }

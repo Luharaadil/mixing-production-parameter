@@ -1,13 +1,13 @@
 
-import React from 'react';
-import { FilterState, MachineType } from '../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { FilterState } from '../types';
 
 interface FilterSectionProps {
   filters: FilterState;
   onFilterChange: (newFilters: Partial<FilterState>) => void;
   onSearch: () => void;
   isLoading: boolean;
-  availableBatches: string[];
+  availableLots: string[];
 }
 
 const FilterSection: React.FC<FilterSectionProps> = ({ 
@@ -15,17 +15,43 @@ const FilterSection: React.FC<FilterSectionProps> = ({
   onFilterChange, 
   onSearch,
   isLoading,
-  availableBatches
+  availableLots
 }) => {
-  const handleToggleBatch = (batch: string) => {
-    const next = filters.selectedBatches.includes(batch)
-      ? filters.selectedBatches.filter(b => b !== batch)
-      : [...filters.selectedBatches, batch];
-    onFilterChange({ selectedBatches: next });
+  const [searchTerm, setSearchTerm] = useState(filters.machine);
+  const [showAllLots, setShowAllLots] = useState(false);
+  const LOT_LIMIT = 100;
+  
+  // Debounce machine name input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchTerm !== filters.machine) {
+        onFilterChange({ machine: searchTerm });
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Sync internal state if filters change from outside
+  useEffect(() => {
+    setSearchTerm(filters.machine);
+  }, [filters.machine]);
+
+  const handleToggleLot = (lot: string) => {
+    const next = filters.selectedLots.includes(lot)
+      ? filters.selectedLots.filter(l => l !== lot)
+      : [...filters.selectedLots, lot];
+    onFilterChange({ selectedLots: next });
   };
 
-  const selectAll = () => onFilterChange({ selectedBatches: [...availableBatches] });
-  const selectNone = () => onFilterChange({ selectedBatches: [] });
+  const selectAll = () => {
+    // Select only lots currently visible/available in the filtered list
+    onFilterChange({ selectedLots: [...availableLots] });
+  };
+
+  const clearAll = () => onFilterChange({ selectedLots: [] });
+
+  const displayedLots = showAllLots ? availableLots : availableLots.slice(0, LOT_LIMIT);
+  const hasMore = availableLots.length > LOT_LIMIT;
 
   return (
     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-8 overflow-hidden relative">
@@ -61,21 +87,19 @@ const FilterSection: React.FC<FilterSectionProps> = ({
           />
         </div>
 
-        {/* Machine Type Select Dropdown - Added as requested */}
+        {/* Machine Name (Text Input) with Debounce */}
         <div className="space-y-1.5">
           <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
-            <i className="fa-solid fa-layer-group text-indigo-400"></i>
-            Machine Type
+            <i className="fa-solid fa-gear text-indigo-400"></i>
+            Machine Identifier
           </label>
-          <select
-            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-xs font-medium appearance-none cursor-pointer"
-            value={filters.machineType}
-            onChange={(e) => onFilterChange({ machineType: e.target.value as MachineType })}
-          >
-            {Object.values(MachineType).map(type => (
-              <option key={type} value={type}>{type}</option>
-            ))}
-          </select>
+          <input
+            type="text"
+            placeholder="Type machine name..."
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-xs font-medium"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
         </div>
 
         {/* Sync Button */}
@@ -98,38 +122,23 @@ const FilterSection: React.FC<FilterSectionProps> = ({
       </div>
 
       {/* Secondary Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        {/* Machine Name (Text Input) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        {/* Lot Number Filter (Text Search for the dynamic list) */}
         <div className="space-y-1.5">
           <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
-            <i className="fa-solid fa-gear text-indigo-400"></i>
-            Machine Search (Partial)
+            <i className="fa-solid fa-magnifying-glass text-indigo-400"></i>
+            Lot Text Search
           </label>
           <input
             type="text"
-            placeholder="Type Machine Name..."
-            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-xs font-medium"
-            value={filters.machine}
-            onChange={(e) => onFilterChange({ machine: e.target.value })}
-          />
-        </div>
-
-        {/* Lot Number */}
-        <div className="space-y-1.5">
-          <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
-            <i className="fa-solid fa-hashtag text-indigo-400"></i>
-            Lot Number
-          </label>
-          <input
-            type="text"
-            placeholder="Search Lot..."
+            placeholder="Filter available lot list..."
             className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-xs font-medium"
             value={filters.lotNumber}
             onChange={(e) => onFilterChange({ lotNumber: e.target.value })}
           />
         </div>
 
-        {/* Rubber Name */}
+        {/* Rubber Name Selection */}
         <div className="space-y-1.5">
           <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
             <i className="fa-solid fa-flask text-indigo-400"></i>
@@ -137,7 +146,7 @@ const FilterSection: React.FC<FilterSectionProps> = ({
           </label>
           <input
             type="text"
-            placeholder="Search Rubber..."
+            placeholder="Search rubber compound..."
             className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-xs font-medium"
             value={filters.rubber}
             onChange={(e) => onFilterChange({ rubber: e.target.value })}
@@ -145,12 +154,12 @@ const FilterSection: React.FC<FilterSectionProps> = ({
         </div>
       </div>
 
-      {/* Batch Selection Container */}
+      {/* Lot Selection Container */}
       <div className="pt-4 border-t border-slate-100">
         <div className="flex items-center justify-between mb-3">
           <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
             <i className="fa-solid fa-list-check text-indigo-400"></i>
-            Batch Selection
+            Lot Selection ({availableLots.length})
           </label>
           <div className="flex gap-2">
             <button 
@@ -160,36 +169,49 @@ const FilterSection: React.FC<FilterSectionProps> = ({
               Select All
             </button>
             <button 
-              onClick={selectNone}
+              onClick={clearAll}
               className="px-2 py-1 text-[9px] font-extrabold uppercase bg-slate-100 text-slate-600 hover:bg-slate-200 rounded transition-colors"
             >
-              Select None
+              Clear All
             </button>
           </div>
         </div>
-        {/* Specific ID for dynamic container as requested */}
-        <div id="batch-checkbox-container" className="grid grid-cols-4 md:grid-cols-8 lg:grid-cols-12 gap-2 max-h-32 overflow-y-auto p-1 border border-slate-50 rounded-lg">
-          {availableBatches.length > 0 ? (
-            availableBatches.map(batch => (
+        
+        {/* Dynamic Lot Selection Container */}
+        <div 
+          id="lot-checkbox-container" 
+          className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 max-h-48 overflow-y-auto p-2 border border-slate-100 rounded-xl bg-slate-50/30"
+        >
+          {displayedLots.length > 0 ? (
+            displayedLots.map(lot => (
               <label 
-                key={batch} 
-                className={`flex items-center justify-center px-2 py-1.5 rounded-lg border text-[10px] font-bold cursor-pointer transition-all ${
-                  filters.selectedBatches.includes(batch)
+                key={lot} 
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-[10px] font-bold cursor-pointer transition-all ${
+                  filters.selectedLots.includes(lot)
                     ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
                     : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'
                 }`}
               >
                 <input
                   type="checkbox"
-                  className="hidden"
-                  checked={filters.selectedBatches.includes(batch)}
-                  onChange={() => handleToggleBatch(batch)}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-3 w-3"
+                  checked={filters.selectedLots.includes(lot)}
+                  onChange={() => handleToggleLot(lot)}
                 />
-                {batch}
+                <span className="truncate">{lot}</span>
               </label>
             ))
           ) : (
-            <p className="col-span-full text-[10px] text-slate-400 font-medium italic py-2">No batches found for matching criteria</p>
+            <p className="col-span-full text-[10px] text-slate-400 font-medium italic py-4 text-center">No lots found for matching criteria</p>
+          )}
+          
+          {hasMore && !showAllLots && (
+            <button 
+              onClick={() => setShowAllLots(true)}
+              className="col-span-full py-2 text-[10px] font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-dashed border-indigo-200 mt-2"
+            >
+              Show {availableLots.length - LOT_LIMIT} More Lots
+            </button>
           )}
         </div>
       </div>
