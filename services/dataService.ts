@@ -1,4 +1,3 @@
-
 import { RawProductionRow, GroupedBatch, MachineType } from '../types';
 
 const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbxEVrBCNinBpAM1pUMsn43rhGT_JaJAIY3CSnJI5mJX51ab_cSihT5BnFxZ2Zfx1VFGQw/exec';
@@ -31,15 +30,20 @@ const generateMockData = (): RawProductionRow[] => {
 };
 
 export const fetchProductionData = async (): Promise<{ data: RawProductionRow[], isMock: boolean }> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30-second timeout
+
   try {
     console.time('api_fetch');
-    // Added mode: 'cors' and explicit headers as requested
     const response = await fetch(GOOGLE_SHEET_URL, { 
       method: 'GET',
       mode: 'cors',
-      credentials: 'omit'
+      credentials: 'omit',
+      signal: controller.signal
     });
     
+    clearTimeout(timeoutId);
+
     if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
     const rawResponse = await response.text();
     console.timeEnd('api_fetch');
@@ -48,14 +52,12 @@ export const fetchProductionData = async (): Promise<{ data: RawProductionRow[],
     try {
       rows = JSON.parse(rawResponse);
     } catch (e) {
-      // Fallback for CSV if script returns raw text instead of JSON
       const lines = rawResponse.trim().split(/\r?\n/);
       rows = lines.map(line => line.split(',').map(c => c.trim().replace(/^"|"$/g, '')));
     }
 
     if (rows.length < 2) return { data: [], isMock: false };
 
-    // Create lookup dictionary for CT values
     const ctLookup: Record<string, string> = {};
     rows.slice(1).forEach(cols => {
       const lotKey = String(cols[23] || '').trim();
@@ -85,7 +87,11 @@ export const fetchProductionData = async (): Promise<{ data: RawProductionRow[],
     });
 
     return { data: dataRows, isMock: false };
-  } catch (error) {
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error("Fetch Request Timed Out after 30 seconds.");
+    }
     console.warn("Switching to mock data due to fetch error:", error);
     return { data: generateMockData(), isMock: true };
   }

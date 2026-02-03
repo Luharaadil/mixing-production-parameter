@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import FilterSection from './components/FilterSection';
 import ProductionTable from './components/ProductionTable';
 import StatsOverview from './components/StatsOverview';
@@ -21,43 +20,15 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isUsingMockData, setIsUsingMockData] = useState(false);
   const [rawSourceData, setRawSourceData] = useState<RawProductionRow[]>([]);
+  const [searchFilteredData, setSearchFilteredData] = useState<RawProductionRow[]>([]);
   const [groupedData, setGroupedData] = useState<GroupedBatch[]>([]);
   const [error, setError] = useState<{ message: string; sub: string } | null>(null);
   const [showLimitWarning, setShowLimitWarning] = useState(false);
 
-  // Stage 1: Partial Filtering (Date, Machine, Rubber)
-  // This is used to derive the dynamic available lots list.
-  const partialFilteredData = useMemo(() => {
-    try {
-      if (rawSourceData.length === 0) return [];
-
-      const start = filters.startDate ? new Date(filters.startDate) : null;
-      if (start) start.setHours(0, 0, 0, 0);
-      const end = filters.endDate ? new Date(filters.endDate) : null;
-      if (end) end.setHours(23, 59, 59, 999);
-
-      return rawSourceData.filter(row => {
-        const rowDate = new Date(row.date);
-        const dateMatch = (!start || rowDate >= start) && (!end || rowDate <= end);
-        
-        const machineMatch = !filters.machine || 
-          String(row.machine || '').toLowerCase().includes(filters.machine.toLowerCase());
-        
-        const rubberMatch = !filters.rubber || 
-          String(row.rubber || '').toLowerCase().includes(filters.rubber.toLowerCase());
-        
-        return dateMatch && machineMatch && rubberMatch;
-      });
-    } catch (e) {
-      console.error("Partial filter error", e);
-      return [];
-    }
-  }, [rawSourceData, filters.startDate, filters.endDate, filters.machine, filters.rubber]);
-
-  // Derive unique lot numbers from partial filtered data (Stage 1 result)
+  // Derive available lots only from the search results pool
   const availableLots = useMemo(() => {
     try {
-      const lots = Array.from(new Set(partialFilteredData.map(r => r.lotNumber)))
+      const lots = Array.from(new Set(searchFilteredData.map(r => r.lotNumber)))
         .filter(l => l && l.trim() !== '')
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
       return lots;
@@ -65,74 +36,95 @@ const App: React.FC = () => {
       console.error("Lot extraction failed", e);
       return [];
     }
-  }, [partialFilteredData]);
+  }, [searchFilteredData]);
 
-  // Reset or adjust selected lots when available lots list changes
-  useEffect(() => {
-    if (availableLots.length === 0) {
-       setFilters(prev => ({ ...prev, selectedLots: [] }));
-       return;
+  const handleSearch = useCallback((dataToFilter?: RawProductionRow[]) => {
+    const source = dataToFilter || rawSourceData;
+    if (source.length === 0) return;
+
+    try {
+      console.log("Applying primary filters (Date, Machine, Rubber)...");
+      const start = filters.startDate ? new Date(filters.startDate) : null;
+      if (start) start.setHours(0, 0, 0, 0);
+      const end = filters.endDate ? new Date(filters.endDate) : null;
+      if (end) end.setHours(23, 59, 59, 999);
+
+      const filtered = source.filter(row => {
+        const rowDate = new Date(row.date);
+        const dateMatch = (!start || rowDate >= start) && (!end || rowDate <= end);
+        const machineMatch = !filters.machine || 
+          String(row.machine || '').toLowerCase().includes(filters.machine.toLowerCase());
+        const rubberMatch = !filters.rubber || 
+          String(row.rubber || '').toLowerCase().includes(filters.rubber.toLowerCase());
+        
+        return dateMatch && machineMatch && rubberMatch;
+      });
+
+      setSearchFilteredData(filtered);
+      
+      // Auto-select all lots from this new filtered set
+      const newLots = Array.from(new Set(filtered.map(r => r.lotNumber))).filter(l => l && l.trim() !== '');
+      setFilters(prev => ({ ...prev, selectedLots: newLots }));
+    } catch (err) {
+      console.error("Search processing error", err);
     }
-    
-    // Auto-select all available if none selected or keep only valid ones
-    setFilters(prev => {
-      const validSelected = prev.selectedLots.filter(lot => availableLots.includes(lot));
-      // If we just loaded or filters changed and no valid selection remains, auto-select all
-      if (validSelected.length === 0 && prev.selectedLots.length > 0) {
-        return { ...prev, selectedLots: availableLots };
-      }
-      return { ...prev, selectedLots: validSelected };
-    });
-  }, [availableLots]);
+  }, [rawSourceData, filters.startDate, filters.endDate, filters.machine, filters.rubber]);
 
   const handleFetchData = async () => {
+    console.log("Start fetch");
     setIsLoading(true);
     setError(null);
     try {
       const { data, isMock } = await fetchProductionData();
+      console.log("Data received. Rows:", data.length);
       setRawSourceData(data);
       setIsUsingMockData(isMock);
       
-      // Initial lot selection handled by the useEffect above
       if (isMock) {
         setError({
           message: "Simulation Active",
           sub: "Cloud connection failed. Using internal performance-testing dataset."
         });
       }
+
+      // Automatically trigger search on first successful fetch
+      handleSearch(data);
+
     } catch (err: any) {
       console.error("Fetch Failure:", err);
       setError({
         message: "Network Failure",
         sub: err.message || "Unable to reach production servers."
       });
-    } finally {
-      // Loader hidden in the processing useEffect
+      // Ensure loader is hidden even on error
+      const loader = document.getElementById('global-loading');
+      if (loader) loader.style.display = 'none';
+      setIsLoading(false);
     }
   };
 
-  // Stage 2: Final Filtering (Stage 1 result + Lot Selection)
+  // Final rendering logic triggered when selected lots or search filtered data changes
   useEffect(() => {
     try {
-      if (rawSourceData.length === 0) {
-        if (!isLoading) {
-          const loader = document.getElementById('global-loading');
-          if (loader) loader.style.display = 'none';
-        }
+      if (searchFilteredData.length === 0 && rawSourceData.length > 0) {
+        // No matches found for primary filters
+        setGroupedData([]);
+        setIsLoading(false);
+        const loader = document.getElementById('global-loading');
+        if (loader) loader.style.display = 'none';
         return;
       }
 
-      console.time('final_processing_pipeline');
+      if (rawSourceData.length === 0) return;
+
+      console.log("Rendering table...");
       
-      // Final Filter includes Stage 1 + Lot Selection
-      const finalFiltered = partialFilteredData.filter(row => {
+      const finalFiltered = searchFilteredData.filter(row => {
         return filters.selectedLots.length === 0 || filters.selectedLots.includes(row.lotNumber);
       });
 
-      // Group Final Filtered Data
       const processed = processBatchData(finalFiltered);
 
-      // Final display filter (text search for lot)
       const finalResult = processed.filter(batch => {
         const lotTextMatch = !filters.lotNumber || 
           String(batch.lotNumber || '').toLowerCase().includes(filters.lotNumber.toLowerCase());
@@ -142,23 +134,22 @@ const App: React.FC = () => {
       setShowLimitWarning(finalResult.length > ROW_DISPLAY_LIMIT);
       setGroupedData(finalResult.slice(0, ROW_DISPLAY_LIMIT));
       
-      console.timeEnd('final_processing_pipeline');
-      
+      // Successfully rendered
       const loader = document.getElementById('global-loading');
       if (loader) loader.style.display = 'none';
       setIsLoading(false);
 
     } catch (err: any) {
-      console.error("Rendering Error:", err);
+      console.error("Final Processing Error:", err);
       setError({
         message: "Processing Error",
-        sub: "A bug occurred during final data assembly. Check logs."
+        sub: "An error occurred during final data assembly."
       });
       const loader = document.getElementById('global-loading');
       if (loader) loader.style.display = 'none';
       setIsLoading(false);
     }
-  }, [partialFilteredData, filters.selectedLots, filters.lotNumber, isLoading]);
+  }, [searchFilteredData, filters.selectedLots, filters.lotNumber]);
 
   useEffect(() => {
     handleFetchData();
@@ -166,11 +157,10 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-12 w-full">
-      {/* Processing Indicator */}
       {isLoading && rawSourceData.length > 0 && (
         <div className="fixed inset-0 bg-white/60 backdrop-blur-[2px] z-[100] flex flex-col items-center justify-center">
           <div className="w-10 h-10 border-4 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-          <p className="text-slate-600 font-bold text-[10px] uppercase tracking-widest">Refreshing Dashboard...</p>
+          <p className="text-slate-600 font-bold text-[10px] uppercase tracking-widest">Updating Dashboard...</p>
         </div>
       )}
 
@@ -211,19 +201,20 @@ const App: React.FC = () => {
         {showLimitWarning && (
           <div className="mb-4 px-4 py-2 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-xl text-[10px] font-bold flex items-center gap-2">
             <i className="fa-solid fa-bolt"></i>
-            Optimized View: Showing top {ROW_DISPLAY_LIMIT} records for better performance.
+            Large Dataset: Displaying top {ROW_DISPLAY_LIMIT} records for stability.
           </div>
         )}
 
         <FilterSection 
           filters={filters} 
           onFilterChange={(newFilters) => setFilters(prev => ({ ...prev, ...newFilters }))} 
-          onSearch={handleFetchData}
+          onSearch={() => handleSearch()}
+          onSync={handleFetchData}
           isLoading={isLoading}
           availableLots={availableLots}
         />
 
-        {filters.selectedLots.length > 0 ? (
+        {filters.selectedLots.length > 0 || isLoading ? (
           <>
             <StatsOverview data={groupedData} />
             <ProductionTable data={groupedData} />
@@ -234,7 +225,7 @@ const App: React.FC = () => {
               <i className="fa-solid fa-check-double text-2xl"></i>
             </div>
             <h3 className="text-slate-900 font-bold">No Lots Selected</h3>
-            <p className="text-slate-500 text-sm mt-1 max-w-xs mx-auto">Please select specific lot numbers from the generated list to visualize production analytics.</p>
+            <p className="text-slate-500 text-sm mt-1 max-w-xs mx-auto">Please apply filters and select lot numbers to visualize production data.</p>
           </div>
         )}
       </main>
