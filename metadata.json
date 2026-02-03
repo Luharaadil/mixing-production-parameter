@@ -1,0 +1,5 @@
+{
+  "name": "Production Parameter Monitor",
+  "description": "A sophisticated manufacturing dashboard for tracking machine production, mapping step-wise time and temperature parameters, and calculating batch efficiencies from Google Sheets data.",
+  "requestFramePermissions": []
+}
