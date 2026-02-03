@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { FilterState } from '../types';
+import { FilterState, MachineType } from '../types';
 
 interface FilterSectionProps {
   filters: FilterState;
@@ -31,31 +31,8 @@ const FilterSection: React.FC<FilterSectionProps> = ({
     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-8 overflow-hidden relative">
       <div className="absolute top-0 left-0 w-1 bg-indigo-600 h-full"></div>
       
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-          <i className="fa-solid fa-sliders text-indigo-500"></i>
-          Search & Filter Controls
-        </h3>
-        
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onSearch}
-            disabled={isLoading}
-            className="flex items-center justify-center h-[38px] px-6 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-md shadow-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed text-xs"
-          >
-            {isLoading ? (
-              <i className="fa-solid fa-circle-notch fa-spin"></i>
-            ) : (
-              <>
-                <i className="fa-solid fa-rotate mr-2"></i>
-                Sync Data
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+      {/* Top Controls: Dates and Sync */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 items-end">
         {/* Start Date */}
         <div className="space-y-1.5">
           <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
@@ -84,15 +61,53 @@ const FilterSection: React.FC<FilterSectionProps> = ({
           />
         </div>
 
+        {/* Machine Type Select Dropdown - Added as requested */}
+        <div className="space-y-1.5">
+          <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
+            <i className="fa-solid fa-layer-group text-indigo-400"></i>
+            Machine Type
+          </label>
+          <select
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-xs font-medium appearance-none cursor-pointer"
+            value={filters.machineType}
+            onChange={(e) => onFilterChange({ machineType: e.target.value as MachineType })}
+          >
+            {Object.values(MachineType).map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Sync Button */}
+        <div>
+          <button
+            onClick={onSearch}
+            disabled={isLoading}
+            className="w-full flex items-center justify-center h-[38px] px-6 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 active:scale-[0.98] transition-all shadow-md shadow-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed text-xs"
+          >
+            {isLoading ? (
+              <i className="fa-solid fa-circle-notch fa-spin"></i>
+            ) : (
+              <>
+                <i className="fa-solid fa-rotate mr-2"></i>
+                Sync Cloud Data
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Secondary Filters */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         {/* Machine Name (Text Input) */}
         <div className="space-y-1.5">
           <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
             <i className="fa-solid fa-gear text-indigo-400"></i>
-            Machine Name
+            Machine Search (Partial)
           </label>
           <input
             type="text"
-            placeholder="Search Machine..."
+            placeholder="Type Machine Name..."
             className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-xs font-medium"
             value={filters.machine}
             onChange={(e) => onFilterChange({ machine: e.target.value })}
@@ -130,7 +145,7 @@ const FilterSection: React.FC<FilterSectionProps> = ({
         </div>
       </div>
 
-      {/* Batch Selection Checkboxes */}
+      {/* Batch Selection Container */}
       <div className="pt-4 border-t border-slate-100">
         <div className="flex items-center justify-between mb-3">
           <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
@@ -152,7 +167,8 @@ const FilterSection: React.FC<FilterSectionProps> = ({
             </button>
           </div>
         </div>
-        <div id="batch-checkbox-container" className="grid grid-cols-4 md:grid-cols-8 lg:grid-cols-12 gap-2 max-h-32 overflow-y-auto p-1">
+        {/* Specific ID for dynamic container as requested */}
+        <div id="batch-checkbox-container" className="grid grid-cols-4 md:grid-cols-8 lg:grid-cols-12 gap-2 max-h-32 overflow-y-auto p-1 border border-slate-50 rounded-lg">
           {availableBatches.length > 0 ? (
             availableBatches.map(batch => (
               <label 
@@ -173,7 +189,7 @@ const FilterSection: React.FC<FilterSectionProps> = ({
               </label>
             ))
           ) : (
-            <p className="col-span-full text-[10px] text-slate-400 font-medium italic">No batches available for selected criteria</p>
+            <p className="col-span-full text-[10px] text-slate-400 font-medium italic py-2">No batches found for matching criteria</p>
           )}
         </div>
       </div>

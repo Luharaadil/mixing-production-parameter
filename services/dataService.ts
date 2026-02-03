@@ -33,7 +33,13 @@ const generateMockData = (): RawProductionRow[] => {
 export const fetchProductionData = async (): Promise<{ data: RawProductionRow[], isMock: boolean }> => {
   try {
     console.time('api_fetch');
-    const response = await fetch(GOOGLE_SHEET_URL, { method: 'GET' });
+    // Added mode: 'cors' and explicit headers as requested
+    const response = await fetch(GOOGLE_SHEET_URL, { 
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit'
+    });
+    
     if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
     const rawResponse = await response.text();
     console.timeEnd('api_fetch');
@@ -42,12 +48,14 @@ export const fetchProductionData = async (): Promise<{ data: RawProductionRow[],
     try {
       rows = JSON.parse(rawResponse);
     } catch (e) {
+      // Fallback for CSV if script returns raw text instead of JSON
       const lines = rawResponse.trim().split(/\r?\n/);
       rows = lines.map(line => line.split(',').map(c => c.trim().replace(/^"|"$/g, '')));
     }
 
+    if (rows.length < 2) return { data: [], isMock: false };
+
     // Create lookup dictionary for CT values
-    // V: index 21 (value), X: index 23 (Lot Key), Y: index 24 (Batch Key)
     const ctLookup: Record<string, string> = {};
     rows.slice(1).forEach(cols => {
       const lotKey = String(cols[23] || '').trim();
@@ -69,7 +77,7 @@ export const fetchProductionData = async (): Promise<{ data: RawProductionRow[],
         lotNumber: lotNum,
         rubber: String(cols[3] || ''),
         batchNumber: batchNum,
-        ct: ctLookup[lookupKey] || '0', // Retrieve CT from dictionary
+        ct: ctLookup[lookupKey] || '0', 
         stepNumber: parseInt(cols[6]) || 0,
         timeValue: parseFloat(cols[9]) || 0,
         tempValue: parseFloat(cols[11]) || 0,
@@ -78,6 +86,7 @@ export const fetchProductionData = async (): Promise<{ data: RawProductionRow[],
 
     return { data: dataRows, isMock: false };
   } catch (error) {
+    console.warn("Switching to mock data due to fetch error:", error);
     return { data: generateMockData(), isMock: true };
   }
 };
