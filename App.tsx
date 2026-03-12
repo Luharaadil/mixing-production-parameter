@@ -5,6 +5,8 @@ import StatsOverview from './components/StatsOverview';
 import { fetchProductionData, processBatchData } from './services/dataService';
 import { FilterState, GroupedBatch, RawProductionRow } from './types';
 
+const ROW_DISPLAY_LIMIT = 1000;
+
 const App: React.FC = () => {
   const [filters, setFilters] = useState<FilterState>({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -19,6 +21,7 @@ const App: React.FC = () => {
   const [rawSourceData, setRawSourceData] = useState<RawProductionRow[]>([]);
   const [groupedData, setGroupedData] = useState<GroupedBatch[]>([]);
   const [error, setError] = useState<{ message: string; sub: string } | null>(null);
+  const [showLimitWarning, setShowLimitWarning] = useState(false);
 
   const availableMachines = useMemo(() => {
     const start = filters.startDate ? new Date(filters.startDate) : null;
@@ -101,7 +104,8 @@ const App: React.FC = () => {
       console.log("Processing filtered records: ", filtered.length);
       const processed = processBatchData(filtered);
       
-      setGroupedData(processed);
+      setShowLimitWarning(processed.length > ROW_DISPLAY_LIMIT);
+      setGroupedData(processed.slice(0, ROW_DISPLAY_LIMIT));
       
       // Successfully rendered
       const loader = document.getElementById('global-loading');
@@ -195,6 +199,13 @@ const App: React.FC = () => {
               <p className="font-bold text-slate-900">{error.message}</p>
               <p className="text-sm text-slate-500 font-medium mt-0.5">{error.sub}</p>
             </div>
+          </div>
+        )}
+
+        {showLimitWarning && (
+          <div className="mb-4 px-4 py-2 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-xl text-[10px] font-bold flex items-center gap-2">
+            <i className="fa-solid fa-bolt"></i>
+            Capacity Limit: Displaying top {ROW_DISPLAY_LIMIT} records for performance stability.
           </div>
         )}
 
