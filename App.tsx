@@ -1,49 +1,85 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import FilterSection from './components/FilterSection';
 import ProductionTable from './components/ProductionTable';
 import StatsOverview from './components/StatsOverview';
 import { fetchProductionData, processBatchData } from './services/dataService';
 import { FilterState, GroupedBatch, RawProductionRow } from './types';
 
-const ROW_DISPLAY_LIMIT = 500;
-
 const App: React.FC = () => {
   const [filters, setFilters] = useState<FilterState>({
     startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
-    machine: '',
+    machine: [],
+    rubber: [],
     lotNumber: '',
-    rubber: '',
-    selectedLots: []
   });
 
   const [isLoading, setIsLoading] = useState(true);
   const [isUsingMockData, setIsUsingMockData] = useState(false);
   const [rawSourceData, setRawSourceData] = useState<RawProductionRow[]>([]);
-  const [searchFilteredData, setSearchFilteredData] = useState<RawProductionRow[]>([]);
   const [groupedData, setGroupedData] = useState<GroupedBatch[]>([]);
   const [error, setError] = useState<{ message: string; sub: string } | null>(null);
-  const [showLimitWarning, setShowLimitWarning] = useState(false);
 
-  // Derive available lots only from the search results pool
-  const availableLots = useMemo(() => {
-    try {
-      const lots = Array.from(new Set(searchFilteredData.map(r => r.lotNumber)))
-        .filter(l => l && l.trim() !== '')
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-      return lots;
-    } catch (e) {
-      console.error("Lot extraction failed", e);
-      return [];
+  const availableMachines = useMemo(() => {
+    const start = filters.startDate ? new Date(filters.startDate) : null;
+    if (start) start.setHours(0, 0, 0, 0);
+    const end = filters.endDate ? new Date(filters.endDate) : null;
+    if (end) end.setHours(23, 59, 59, 999);
+
+    const filtered = rawSourceData.filter(row => {
+      const rowDate = new Date(row.date);
+      const dateMatch = (!start || rowDate >= start) && (!end || rowDate <= end);
+      const rubberMatch = filters.rubber.length === 0 || filters.rubber.includes(String(row.rubber || ''));
+      return dateMatch && rubberMatch;
+    });
+    return Array.from(new Set(filtered.map(r => r.machine).filter(Boolean))).sort();
+  }, [rawSourceData, filters.startDate, filters.endDate, filters.rubber]);
+
+  const availableRubbers = useMemo(() => {
+    const start = filters.startDate ? new Date(filters.startDate) : null;
+    if (start) start.setHours(0, 0, 0, 0);
+    const end = filters.endDate ? new Date(filters.endDate) : null;
+    if (end) end.setHours(23, 59, 59, 999);
+
+    const filtered = rawSourceData.filter(row => {
+      const rowDate = new Date(row.date);
+      const dateMatch = (!start || rowDate >= start) && (!end || rowDate <= end);
+      const machineMatch = filters.machine.length === 0 || filters.machine.includes(String(row.machine || ''));
+      return dateMatch && machineMatch;
+    });
+    return Array.from(new Set(filtered.map(r => r.rubber).filter(Boolean))).sort();
+  }, [rawSourceData, filters.startDate, filters.endDate, filters.machine]);
+
+  useEffect(() => {
+    if (filters.machine.length > 0) {
+      const validMachines = filters.machine.filter(m => availableMachines.includes(m));
+      if (validMachines.length !== filters.machine.length) {
+        setFilters(prev => ({ ...prev, machine: validMachines }));
+      }
     }
-  }, [searchFilteredData]);
+  }, [availableMachines, filters.machine]);
 
-  const handleSearch = useCallback((dataToFilter?: RawProductionRow[]) => {
+  useEffect(() => {
+    if (filters.rubber.length > 0) {
+      const validRubbers = filters.rubber.filter(r => availableRubbers.includes(r));
+      if (validRubbers.length !== filters.rubber.length) {
+        setFilters(prev => ({ ...prev, rubber: validRubbers }));
+      }
+    }
+  }, [availableRubbers, filters.rubber]);
+
+  const applyFilters = useCallback((dataToFilter?: RawProductionRow[]) => {
     const source = dataToFilter || rawSourceData;
-    if (source.length === 0) return;
+    if (source.length === 0) {
+      setGroupedData([]);
+      const loader = document.getElementById('global-loading');
+      if (loader) loader.style.display = 'none';
+      setIsLoading(false);
+      return;
+    }
 
     try {
-      console.log("Applying primary filters (Date, Machine, Rubber)...");
+      console.log("Applying filters (Date, Machine, Rubber, Lot)...");
       const start = filters.startDate ? new Date(filters.startDate) : null;
       if (start) start.setHours(0, 0, 0, 0);
       const end = filters.endDate ? new Date(filters.endDate) : null;
@@ -52,31 +88,44 @@ const App: React.FC = () => {
       const filtered = source.filter(row => {
         const rowDate = new Date(row.date);
         const dateMatch = (!start || rowDate >= start) && (!end || rowDate <= end);
-        const machineMatch = !filters.machine || 
-          String(row.machine || '').toLowerCase().includes(filters.machine.toLowerCase());
-        const rubberMatch = !filters.rubber || 
-          String(row.rubber || '').toLowerCase().includes(filters.rubber.toLowerCase());
+        const machineMatch = filters.machine.length === 0 || 
+          filters.machine.includes(String(row.machine || ''));
+        const rubberMatch = filters.rubber.length === 0 || 
+          filters.rubber.includes(String(row.rubber || ''));
+        const lotMatch = !filters.lotNumber ||
+          String(row.lotNumber || '').toLowerCase().includes(filters.lotNumber.toLowerCase());
         
-        return dateMatch && machineMatch && rubberMatch;
+        return dateMatch && machineMatch && rubberMatch && lotMatch;
       });
 
-      setSearchFilteredData(filtered);
+      console.log("Processing filtered records: ", filtered.length);
+      const processed = processBatchData(filtered);
       
-      // Auto-select all lots from this new filtered set
-      const newLots = Array.from(new Set(filtered.map(r => r.lotNumber))).filter(l => l && l.trim() !== '');
-      setFilters(prev => ({ ...prev, selectedLots: newLots }));
+      setGroupedData(processed);
+      
+      // Successfully rendered
+      const loader = document.getElementById('global-loading');
+      if (loader) loader.style.display = 'none';
+      setIsLoading(false);
     } catch (err) {
-      console.error("Search processing error", err);
+      console.error("Processing error", err);
+      setError({
+        message: "Processing Error",
+        sub: "An error occurred during data assembly."
+      });
+      const loader = document.getElementById('global-loading');
+      if (loader) loader.style.display = 'none';
+      setIsLoading(false);
     }
-  }, [rawSourceData, filters.startDate, filters.endDate, filters.machine, filters.rubber]);
+  }, [rawSourceData, filters.startDate, filters.endDate, filters.machine, filters.rubber, filters.lotNumber]);
 
   const handleFetchData = async () => {
-    console.log("Start fetch");
+    console.log("Initiating data sync");
     setIsLoading(true);
     setError(null);
     try {
       const { data, isMock } = await fetchProductionData();
-      console.log("Data received. Rows:", data.length);
+      console.log("Data sync complete. Raw rows:", data.length);
       setRawSourceData(data);
       setIsUsingMockData(isMock);
       
@@ -87,80 +136,31 @@ const App: React.FC = () => {
         });
       }
 
-      // Automatically trigger search on first successful fetch
-      handleSearch(data);
-
+      applyFilters(data);
     } catch (err: any) {
       console.error("Fetch Failure:", err);
       setError({
         message: "Network Failure",
         sub: err.message || "Unable to reach production servers."
       });
-      // Ensure loader is hidden even on error
       const loader = document.getElementById('global-loading');
       if (loader) loader.style.display = 'none';
       setIsLoading(false);
     }
   };
 
-  // Final rendering logic triggered when selected lots or search filtered data changes
   useEffect(() => {
-    try {
-      if (searchFilteredData.length === 0 && rawSourceData.length > 0) {
-        // No matches found for primary filters
-        setGroupedData([]);
-        setIsLoading(false);
-        const loader = document.getElementById('global-loading');
-        if (loader) loader.style.display = 'none';
-        return;
-      }
-
-      if (rawSourceData.length === 0) return;
-
-      console.log("Rendering table...");
-      
-      const finalFiltered = searchFilteredData.filter(row => {
-        return filters.selectedLots.length === 0 || filters.selectedLots.includes(row.lotNumber);
-      });
-
-      const processed = processBatchData(finalFiltered);
-
-      const finalResult = processed.filter(batch => {
-        const lotTextMatch = !filters.lotNumber || 
-          String(batch.lotNumber || '').toLowerCase().includes(filters.lotNumber.toLowerCase());
-        return lotTextMatch;
-      });
-
-      setShowLimitWarning(finalResult.length > ROW_DISPLAY_LIMIT);
-      setGroupedData(finalResult.slice(0, ROW_DISPLAY_LIMIT));
-      
-      // Successfully rendered
-      const loader = document.getElementById('global-loading');
-      if (loader) loader.style.display = 'none';
-      setIsLoading(false);
-
-    } catch (err: any) {
-      console.error("Final Processing Error:", err);
-      setError({
-        message: "Processing Error",
-        sub: "An error occurred during final data assembly."
-      });
-      const loader = document.getElementById('global-loading');
-      if (loader) loader.style.display = 'none';
-      setIsLoading(false);
-    }
-  }, [searchFilteredData, filters.selectedLots, filters.lotNumber]);
-
-  useEffect(() => {
+    const loader = document.getElementById('global-loading');
+    if (loader) loader.style.display = 'none';
     handleFetchData();
   }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-12 w-full">
-      {isLoading && rawSourceData.length > 0 && (
+      {isLoading && (
         <div className="fixed inset-0 bg-white/60 backdrop-blur-[2px] z-[100] flex flex-col items-center justify-center">
           <div className="w-10 h-10 border-4 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-          <p className="text-slate-600 font-bold text-[10px] uppercase tracking-widest">Updating Dashboard...</p>
+          <p className="text-slate-600 font-bold text-[10px] uppercase tracking-widest">Processing Data Layout...</p>
         </div>
       )}
 
@@ -171,8 +171,8 @@ const App: React.FC = () => {
               <i className="fa-solid fa-industry"></i>
             </div>
             <div>
-              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">Production Monitoring Dashboard</h1>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">Maxxis Rubber India • Parameter Tracking</p>
+              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">Production Parameter Monitor</h1>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">Maxxis Rubber India • Advanced Analytics</p>
             </div>
           </div>
           
@@ -198,36 +198,18 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {showLimitWarning && (
-          <div className="mb-4 px-4 py-2 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-xl text-[10px] font-bold flex items-center gap-2">
-            <i className="fa-solid fa-bolt"></i>
-            Large Dataset: Displaying top {ROW_DISPLAY_LIMIT} records for stability.
-          </div>
-        )}
-
         <FilterSection 
           filters={filters} 
           onFilterChange={(newFilters) => setFilters(prev => ({ ...prev, ...newFilters }))} 
-          onSearch={() => handleSearch()}
+          onSearch={() => applyFilters()}
           onSync={handleFetchData}
           isLoading={isLoading}
-          availableLots={availableLots}
+          availableMachines={availableMachines}
+          availableRubbers={availableRubbers}
         />
 
-        {filters.selectedLots.length > 0 || isLoading ? (
-          <>
-            <StatsOverview data={groupedData} />
-            <ProductionTable data={groupedData} />
-          </>
-        ) : (
-          <div className="bg-white p-16 rounded-2xl border border-dashed border-slate-300 text-center">
-            <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center text-slate-300 mx-auto mb-4">
-              <i className="fa-solid fa-check-double text-2xl"></i>
-            </div>
-            <h3 className="text-slate-900 font-bold">No Lots Selected</h3>
-            <p className="text-slate-500 text-sm mt-1 max-w-xs mx-auto">Please apply filters and select lot numbers to visualize production data.</p>
-          </div>
-        )}
+        <StatsOverview data={groupedData} />
+        <ProductionTable data={groupedData} />
       </main>
     </div>
   );

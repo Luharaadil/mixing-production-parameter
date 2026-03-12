@@ -1,6 +1,6 @@
 /**
  * Google Apps Script for Production Parameter Monitor
- * Updated to handle strict MIME type checking and CORS correctly.
+ * Fetches data up to Column Y (Index 24) to cover all required indices.
  */
 
 function doGet() {
@@ -8,7 +8,7 @@ function doGet() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheets()[0]; // Get first sheet
     
-    // Explicitly fetch up to Column Y (Index 24)
+    // Fetch up to Column Y (Index 24) to capture indices 11, 13, 14 etc.
     var lastRow = sheet.getLastRow();
     var range = sheet.getRange(1, 1, lastRow, 25); // 25 columns (A to Y)
     var data = range.getValues();
@@ -16,7 +16,7 @@ function doGet() {
     // Convert to JSON
     var output = JSON.stringify(data);
     
-    // Explicitly set MIME type to JSON using ContentService
+    // Set MIME type to JSON using ContentService
     return ContentService.createTextOutput(output)
       .setMimeType(ContentService.MimeType.JSON);
       

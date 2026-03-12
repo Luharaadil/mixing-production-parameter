@@ -1,3 +1,4 @@
+
 import { RawProductionRow, GroupedBatch, MachineType } from '../types';
 
 const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbxEVrBCNinBpAM1pUMsn43rhGT_JaJAIY3CSnJI5mJX51ab_cSihT5BnFxZ2Zfx1VFGQw/exec';
@@ -24,75 +25,106 @@ const generateMockData = (): RawProductionRow[] => {
       stepNumber: (i % 5) + 1,
       timeValue: 2 + Math.random() * 8,
       tempValue: 50 + Math.random() * 50,
+      power: 100 + Math.random() * 50,
+      speed: 30 + Math.random() * 10,
     });
   }
   return mockRows;
 };
 
-export const fetchProductionData = async (): Promise<{ data: RawProductionRow[], isMock: boolean }> => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30-second timeout
-
-  try {
-    console.time('api_fetch');
-    const response = await fetch(GOOGLE_SHEET_URL, { 
-      method: 'GET',
-      mode: 'cors',
-      credentials: 'omit',
-      signal: controller.signal
-    });
+/**
+ * Enhanced fetch with longer timeout and retry logic
+ */
+const fetchWithRetry = async (url: string, retries: number = 1, timeoutMs: number = 180000): Promise<Response> => {
+  for (let i = 0; i <= retries; i++) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
     
-    clearTimeout(timeoutId);
+    try {
+      console.log(`Fetch attempt ${i + 1} of ${retries + 1}...`);
+      const response = await fetch(url, {
+        method: 'GET',
+        mode: 'cors',
+        credentials: 'omit',
+        signal: controller.signal,
+        cache: 'no-store'
+      });
+      clearTimeout(id);
+      return response;
+    } catch (err: any) {
+      clearTimeout(id);
+      if (i === retries) throw err;
+      console.warn(`Attempt ${i + 1} failed, retrying...`, err.message);
+    }
+  }
+  throw new Error('All fetch attempts failed');
+};
+
+export const fetchProductionData = async (): Promise<{ data: RawProductionRow[], isMock: boolean }> => {
+  try {
+    console.time('api_fetch_total');
+    const response = await fetchWithRetry(GOOGLE_SHEET_URL, 1, 180000); // 180s timeout, 1 retry
 
     if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
     const rawResponse = await response.text();
-    console.timeEnd('api_fetch');
+    console.timeEnd('api_fetch_total');
 
     let rows: any[][];
     try {
       rows = JSON.parse(rawResponse);
     } catch (e) {
+      // Fallback for CSV formatted response if JSON parse fails
       const lines = rawResponse.trim().split(/\r?\n/);
       rows = lines.map(line => line.split(',').map(c => c.trim().replace(/^"|"$/g, '')));
     }
 
     if (rows.length < 2) return { data: [], isMock: false };
 
+    // Dictionary for CT Matching using indices 13 (Lot Match) and 14 (Batch Match)
     const ctLookup: Record<string, string> = {};
     rows.slice(1).forEach(cols => {
-      const lotKey = String(cols[23] || '').trim();
-      const batchKey = String(cols[24] || '').trim();
+      const lotKey = String(cols[13] || '').trim();   // Column N
+      const batchKey = String(cols[14] || '').trim(); // Column O
       if (lotKey && batchKey) {
         const key = `${lotKey}_${batchKey}`;
-        ctLookup[key] = String(cols[21] || '0');
+        ctLookup[key] = String(cols[11] || '0');      // Column L
       }
     });
 
-    const dataRows = rows.slice(1).map(cols => {
-      const lotNum = String(cols[2] || '');
-      const batchNum = String(cols[5] || '');
-      const lookupKey = `${lotNum.trim()}_${batchNum.trim()}`;
+    const dataRows = rows.slice(1)
+      .filter(cols => 
+        String(cols[0] || '').trim() !== '' && 
+        String(cols[2] || '').trim() !== '' && 
+        String(cols[4] || '').trim() !== ''
+      )
+      .map(cols => {
+      const lotNum = String(cols[2] || '').trim();    // Column C
+      const batchNum = String(cols[4] || '').trim();  // Column E
+      const lookupKey = `${lotNum}_${batchNum}`;
       
       return {
-        date: String(cols[1] || ''),
-        machine: String(cols[0] || ''),
-        lotNumber: lotNum,
-        rubber: String(cols[3] || ''),
-        batchNumber: batchNum,
+        machine: String(cols[0] || '').trim(),        // Column A
+        date: String(cols[1] || '').trim(),           // Column B
+        lotNumber: lotNum,                     // Column C
+        rubber: String(cols[3] || '').trim(),         // Column D
+        batchNumber: batchNum,                 // Column E
+        stepNumber: parseInt(cols[5]) || 0,    // Column F
+        timeValue: parseFloat(cols[6]) || 0,   // Column G
+        tempValue: parseFloat(cols[7]) || 0,   // Column H
+        power: parseFloat(cols[8]) || 0,       // Column I
+        speed: parseFloat(cols[9]) || 0,       // Column J
         ct: ctLookup[lookupKey] || '0', 
-        stepNumber: parseInt(cols[6]) || 0,
-        timeValue: parseFloat(cols[9]) || 0,
-        tempValue: parseFloat(cols[11]) || 0,
       };
     });
 
     return { data: dataRows, isMock: false };
   } catch (error: any) {
-    clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      console.error("Fetch Request Timed Out after 30 seconds.");
+      console.error("Fetch Request Timed Out after extended duration.");
+    } else {
+      console.error("Fetch Data Error:", error);
     }
-    console.warn("Switching to mock data due to fetch error:", error);
+    console.warn("Switching to simulation mode due to connection timeout or failure.");
     return { data: generateMockData(), isMock: true };
   }
 };
@@ -114,6 +146,8 @@ export const processBatchData = (rows: RawProductionRow[]): GroupedBatch[] => {
         date: row.date,
         ct: String(row.ct || '0'),
         mx: 0,
+        avgPower: 0,
+        avgSpeed: 0,
         steps: {},
         originalRows: []
       };
@@ -121,17 +155,29 @@ export const processBatchData = (rows: RawProductionRow[]): GroupedBatch[] => {
 
     const group = groups[key];
     group.mx += row.timeValue;
+    group.avgPower += row.power;
+    group.avgSpeed += row.speed;
     
     if (row.stepNumber > 0 && row.stepNumber < 100) {
       group.steps[row.stepNumber] = {
         time: row.timeValue,
-        temp: row.tempValue
+        temp: row.tempValue,
+        power: row.power,
+        speed: row.speed
       };
     }
     group.originalRows.push(row);
   }
 
-  const batches = Object.values(groups);
+  const batches = Object.values(groups).map(batch => {
+    const count = batch.originalRows.length;
+    return {
+      ...batch,
+      avgPower: batch.avgPower / (count || 1),
+      avgSpeed: batch.avgSpeed / (count || 1)
+    };
+  });
+
   console.timeEnd('grouping_processing');
   return batches;
 };

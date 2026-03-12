@@ -7,24 +7,30 @@ interface StatsOverviewProps {
 }
 
 const StatsOverview: React.FC<StatsOverviewProps> = ({ data }) => {
-  const totalBatches = data.length;
+  const validData = React.useMemo(() => data.filter(batch => batch.mx !== 0), [data]);
+  const totalBatches = validData.length;
   
   const stats = React.useMemo(() => {
     if (totalBatches === 0) return { avgMx: 0, avgCt: 0 };
     
     let totalMx = 0;
     let totalCt = 0;
+    let ctCount = 0;
     
-    data.forEach(b => {
+    validData.forEach(b => {
       totalMx += b.mx;
-      totalCt += parseFloat(b.ct || '0');
+      const ctVal = parseFloat(b.ct || '0');
+      if (ctVal > 0) {
+        totalCt += ctVal;
+        ctCount++;
+      }
     });
     
     return {
       avgMx: totalMx / totalBatches,
-      avgCt: totalCt / totalBatches
+      avgCt: ctCount > 0 ? totalCt / ctCount : 0
     };
-  }, [data, totalBatches]);
+  }, [validData, totalBatches]);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">

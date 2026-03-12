@@ -27,6 +27,7 @@ const ProductionTable: React.FC<ProductionTableProps> = ({ data }) => {
 
     let totalMx = 0;
     let totalCt = 0;
+    let ctCount = 0;
     
     // Accumulators for step totals to handle missing steps correctly
     const stepTimeSums: Record<number, number> = {};
@@ -36,7 +37,11 @@ const ProductionTable: React.FC<ProductionTableProps> = ({ data }) => {
 
     validData.forEach(batch => {
       totalMx += batch.mx;
-      totalCt += parseFloat(batch.ct || '0');
+      const ctVal = parseFloat(batch.ct || '0');
+      if (ctVal > 0) {
+        totalCt += ctVal;
+        ctCount++;
+      }
 
       stepColumns.forEach(step => {
         const stepData = batch.steps[step];
@@ -62,7 +67,7 @@ const ProductionTable: React.FC<ProductionTableProps> = ({ data }) => {
 
     return {
       mx: (totalMx / rowCount).toFixed(2),
-      ct: (totalCt / rowCount).toFixed(2),
+      ct: ctCount > 0 ? (totalCt / ctCount).toFixed(2) : '0.00',
       steps: stepAverages
     };
   }, [validData, stepColumns]);
